@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 
-from models import RiemannianFeatures, Model
+from models import RiemannianFeatures, Model, LinearClassifier
 from utils import cal_accuracy, cluster_metrics, cal_F1
 from data_factory import load_data
 from sklearn.cluster import KMeans
@@ -23,6 +23,12 @@ class Exp:
         logger = create_logger(self.configs.log_path)
         device = self.device
         features, in_features, labels, edge_index, motif, masks, n_classes = load_data(self.configs.root_path, self.configs.dataset)
+
+        if self.configs.downstream_task == "NC":
+            vals = []
+            accs = []
+            wf1s = []
+            mf1s = []
         for exp_iter in range(self.configs.exp_iters):
             logger.info(f"\ntrain iters {exp_iter}")
             Riemann_embeds_getter = RiemannianFeatures(features.shape[0], self.configs.dimensions, self.configs.d_free,
@@ -52,6 +58,22 @@ class Exp:
                 r_optim.step()
                 optimizer.step()
                 logger.info(f"Epoch {epoch}: train_loss={loss.item()}")
+            if self.configs.downstream_task == 'NC':
+                best_val, test_acc, test_weighted_f1, test_macro_f1 = self.train_cls(products, labels, n_classes, masks, [r_optim, optimizer])
+                vals.append(best_val)
+                accs.append(test_acc)
+                wf1s.append(test_weighted_f1)
+                mf1s.append(test_macro_f1)
+            elif self.configs.downstream_task == 'LP':
+                pass
+            else:
+                raise NotImplementedError
+
+        if self.configs.downstream_task == "NC":
+            logger.info(f"valid results: {np.mean(vals)}~{np.std(vals)}")
+            logger.info(f"test results: {np.mean(accs)}~{np.std(accs)}")
+            logger.info(f"test weighted-f1: {np.mean(wf1s)}~{np.std(wf1s)}")
+            logger.info(f"test macro-f1: {np.mean(mf1s)}~{np.std(mf1s)}")
 
     def cal_cls_loss(self, model, mask, adj, features, labels):
         out = model(features, adj)
@@ -60,15 +82,14 @@ class Exp:
         weighted_f1, macro_f1 = cal_F1(out[mask].detach().cpu(), labels[mask].detach().cpu())
         return loss, acc, weighted_f1, macro_f1
 
-    def evaluate_adj_by_cls(self, adj, features, in_features, labels, n_classes, masks):
+    def train_cls(self, features, labels, n_classes, masks, optims):
         """masks = (train, val, test)"""
         device = self.device
-        model = self.select_backbone_model(in_features, n_classes).to(device)
+        model = LinearClassifier(self.configs.embed_features, n_classes).to(device)
         optimizer = torch.optim.Adam(model.parameters(), betas=self.configs.betas, lr=self.configs.lr_cls,
                                      weight_decay=self.configs.w_decay_cls)
 
         best_acc = 0.
-        best_weighted_f1, best_macro_f1 = 0., 0.
         early_stop_count = 0
         best_model = None
 
@@ -76,18 +97,21 @@ class Exp:
             model.train()
             loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model, masks[0], adj, features, labels)
             optimizer.zero_grad()
+            for optim in optims:
+                optim.zero_grad()
             loss.backward()
             optimizer.step()
-            # print(f"Epoch {epoch}: train_loss={loss.item()}, train_accuracy={acc}")
+            for optim in optims:
+                optim.step()
+            print(f"Epoch {epoch}: train_loss={loss.item()}, train_accuracy={acc}")
 
-            if epoch % 10 == 0:
+            if epoch % self.configs.eval_freq == 0:
                 model.eval()
                 val_loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model, masks[1], adj, features, labels)
-                # print(f"Epoch {epoch}: val_loss={val_loss.item()}, val_accuracy={acc}")
+                print(f"Epoch {epoch}: val_loss={val_loss.item()}, val_accuracy={acc}")
                 if acc > best_acc:
                     early_stop_count = 0
                     best_acc = acc
-                    best_weighted_f1, best_macro_f1 = weighted_f1, macro_f1
                     best_model = model
                 else:
                     early_stop_count += 1
@@ -96,4 +120,4 @@ class Exp:
         best_model.eval()
         test_loss, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(best_model, masks[2], adj, features,
                                                                                  labels)
-        return best_acc, test_acc, best_model, test_weighted_f1, test_macro_f1
+        return best_acc, test_acc, test_weighted_f1, test_macro_f1

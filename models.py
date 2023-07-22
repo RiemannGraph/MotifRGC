@@ -94,7 +94,7 @@ class Model(nn.Module):
         x = self.encoder(x, edge_index)
         laplacian = self.random_mapping(rm_features.manifolds, products)
         loss = self.cal_cl_loss(x, torch.concat(laplacian, -1)) + self.cal_motif_loss(products, motif)
-        return products, loss
+        return torch.concat(laplacian, -1), loss
 
     def random_mapping(self, manifolds, products):
         out = []
@@ -143,6 +143,26 @@ class Model(nn.Module):
         f_v = features[v]
         f_w = features[w]
         return torch.concat([f_u, f_v, f_w], -1)
+
+
+class LinearClassifier(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(LinearClassifier, self).__init__()
+        self.fc = nn.Linear(in_channels, out_channels)
+
+    def forward(self, x):
+        return self.fc(x)
+
+
+class FermiDiracDecoder(nn.Module):
+    def __init__(self, r, t):
+        super(FermiDiracDecoder, self).__init__()
+        self.r = r
+        self.t = t
+
+    def forward(self, dist):
+        probs = 1. / (torch.exp((dist - self.r) / self.t) + 1.0)
+        return probs
 
 
 

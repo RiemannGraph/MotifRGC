@@ -33,7 +33,6 @@ parser.add_argument('--d_embeds', type=int, default=8, help='dimension of laplac
 parser.add_argument('--d_free', type=int, default=2, help='dimension of rotational factor')
 parser.add_argument('--init_curvature', type=int, default=-1.0, help='initial curvature')
 
-
 # Contrastive Learning Module
 parser.add_argument('--backbone', type=str, default='gcn', choices=['gcn', 'gat', 'sage'])
 parser.add_argument('--epochs', type=int, default=1000)
@@ -45,12 +44,12 @@ parser.add_argument('--drop_edge', type=float, default=0.75)
 parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--w_decay', type=float, default=0.)
 parser.add_argument('--n_heads', type=int, default=8, help='number of attention heads')
-parser.add_argument('--s', type=float, default=1., help='for Fermi-Dirac decoder')
+parser.add_argument('--t', type=float, default=1., help='for Fermi-Dirac decoder')
 parser.add_argument('--r', type=float, default=2., help='Fermi-Dirac decoder')
 parser.add_argument('--gamma', type=float, default=5., help='coefficient for structural loss')
 parser.add_argument('--temperature', type=float, default=0.2, help='temperature of contrastive loss')
 
-# Evaluation NetWork for Classification
+# Evaluation for Classification
 parser.add_argument('--n_layers_cls', type=int, default=2)
 parser.add_argument('--lr_cls', type=float, default=0.005)
 parser.add_argument('--epochs_cls', type=int, default=200)
