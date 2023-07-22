@@ -49,7 +49,7 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
     features = dataset.data.x
     num_features = dataset.num_features
     labels = dataset.data.y
-    edge_index = dataset.data.edge_index
+    edge_index = dataset.data.edge_index.long()
     motif = get_motif(edge_index)
     num_classes = dataset.num_classes
     return features, num_features, labels, edge_index, motif, (train_mask, val_mask, test_mask), num_classes

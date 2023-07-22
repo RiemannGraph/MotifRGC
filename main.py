@@ -41,7 +41,7 @@ parser.add_argument('--embed_features', type=int, default=32, help='dimensions o
 parser.add_argument('--n_layers', type=int, default=2)
 parser.add_argument('--drop_node', type=float, default=0.5)
 parser.add_argument('--drop_edge', type=float, default=0.75)
-parser.add_argument('--lr', type=float, default=0.001)
+parser.add_argument('--lr', type=float, default=0.01)
 parser.add_argument('--w_decay', type=float, default=0.)
 parser.add_argument('--n_heads', type=int, default=8, help='number of attention heads')
 parser.add_argument('--t', type=float, default=1., help='for Fermi-Dirac decoder')
@@ -51,11 +51,11 @@ parser.add_argument('--temperature', type=float, default=0.2, help='temperature 
 
 # Evaluation for Classification
 parser.add_argument('--n_layers_cls', type=int, default=2)
-parser.add_argument('--lr_cls', type=float, default=0.005)
+parser.add_argument('--lr_cls', type=float, default=0.001)
+parser.add_argument('--w_decay_cls', type=float, default=5e-4)
 parser.add_argument('--epochs_cls', type=int, default=200)
 parser.add_argument('--patience_cls', type=int, default=10)
 parser.add_argument('--save_path_cls', type=str, default='./checkpoints/cls.pth')
-
 
 # GPU
 parser.add_argument('--use_gpu', action='store_false', help='use gpu')

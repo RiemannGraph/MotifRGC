@@ -28,8 +28,9 @@ class RiemannianFeatures(nn.Module):
                 self.init_weights(features)
             self.manifolds.append(manifold)
             self.features.append(features)
-        self.manifolds.append(Euclidean(d_free))
-        self.features.append(ManifoldParameter(ManifoldTensor(torch.empty(num_nodes, d_free), manifold=Euclidean(d_free))))
+        manifold = StereographicExact(k=0, learnable=False)
+        self.manifolds.append(manifold)
+        self.features.append(ManifoldParameter(ManifoldTensor(torch.randn(num_nodes, d_free), manifold=manifold)))
 
     @staticmethod
     def init_weights(w, scale=1e-4):
@@ -59,7 +60,7 @@ EPS = 1e-5
 
 class Model(nn.Module):
     def __init__(self, backbone, n_layers, in_features, hidden_features, embed_features, n_heads, drop_edge, drop_node,
-                 num_factors, dimensions, d_embeds, device=torch.device('cuda')):
+                 num_factors, dimensions, d_free, d_embeds, temperature, device=torch.device('cuda')):
         super(Model, self).__init__()
         assert (num_factors + 1) * d_embeds == embed_features, "Embed dimensions do not match"
         if backbone == 'gcn':
@@ -71,11 +72,14 @@ class Model(nn.Module):
         else:
             raise NotImplementedError
 
+        self.temperature = temperature
         self.Ws = []
         self.bias = []
-        for i in range(num_factors):
+        for i in range(num_factors + 1):
             if isinstance(dimensions, list):
                 d = dimensions[i]
+            elif i == num_factors:
+                d = d_free
             else:
                 d = dimensions
             pre = torch.randn(d_embeds, d).to(device)
@@ -84,16 +88,17 @@ class Model(nn.Module):
             self.bias.append(2 * torch.pi * torch.rand(d_embeds).to(device))
 
         self.motif_cls = nn.Sequential(
-            nn.Linear(3 * embed_features, 64),
+            nn.Linear(3 * d_embeds, 64),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(64, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x, edge_index, motif, rm_features: RiemannianFeatures):
         products = rm_features()
         x = self.encoder(x, edge_index)
         laplacian = self.random_mapping(rm_features.manifolds, products)
-        loss = self.cal_cl_loss(x, torch.concat(laplacian, -1)) + self.cal_motif_loss(products, motif)
+        loss = self.cal_cl_loss(x, torch.concat(laplacian, -1)) + self.cal_motif_loss(laplacian, motif)
         return torch.concat(laplacian, -1), loss
 
     def random_mapping(self, manifolds, products):
@@ -107,7 +112,8 @@ class Model(nn.Module):
                 distance = x @ w.t()
             else:
                 div = torch.sum((x[:, None] - w[None]) ** 2, dim=-1)
-                distance = torch.log((1 + k * x @ x) / (div + EPS))
+                distance = torch.log((1 + k * torch.sum(x * x, -1, keepdim=True)) / (div + EPS) + EPS)
+            n = x.shape[-1]
             z = torch.exp((n - 1) * distance / 2) * torch.cos(distance + b)
             out.append(z)
         return out
@@ -115,7 +121,7 @@ class Model(nn.Module):
     def cal_cl_loss(self, x1, x2):
         norm1 = x1.norm(dim=-1)
         norm2 = x2.norm(dim=-1)
-        sim_matrix = torch.einsum('ik,jk->ij', x1, x2) / torch.einsum('i,j->ij', norm1, norm2)
+        sim_matrix = torch.einsum('ik,jk->ij', x1, x2) / (torch.einsum('i,j->ij', norm1, norm2) + EPS)
         sim_matrix = torch.exp(sim_matrix / self.temperature)
         pos_sim = sim_matrix.diag()
         loss_1 = pos_sim / (sim_matrix.sum(dim=-2) - pos_sim)
@@ -133,7 +139,7 @@ class Model(nn.Module):
         for product in products:
             pos = self.motif_cls(self.nodes_from_motif(product, motifs))
             neg = self.motif_cls(self.nodes_from_motif(product, neg_motifs))
-            loss = loss + F.binary_cross_entropy(pos, torch.ones(pos)) + F.binary_cross_entropy(neg, torch.zeros(neg))
+            loss = loss + F.binary_cross_entropy(pos, torch.ones_like(pos)) + F.binary_cross_entropy(neg, torch.zeros_like(neg))
         return loss
 
     @staticmethod

@@ -17,7 +17,7 @@ class GCN(nn.Module):
         self.drop = nn.Dropout(drop_feats)
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)
+        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
         for layer in self.layers[:-1]:
             x = self.drop(F.relu(layer(x, edge_index)))
         x = self.layers[-1](x, edge_index)
@@ -36,7 +36,7 @@ class GAT(nn.Module):
         self.drop = nn.Dropout(drop_feats)
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)
+        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
         for layer in self.layers:
             x = layer(x, edge_index)
         return x
@@ -54,7 +54,7 @@ class GraphSAGE(nn.Module):
         self.dropout_edge = drop_edge
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.dropout_edge, training=self.training)
+        edge_index = dropout_edge(edge_index, self.dropout_edge, training=self.training)[0]
         for layer in self.layers[: -1]:
             x = self.drop(F.relu(layer(x, edge_index)))
         x = self.layers[-1](x, edge_index)
