@@ -2,8 +2,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
-
-from models import RiemannianFeatures, Model, LinearClassifier, GCNClassifier, CLLoss, MotifLoss
+from models import RiemannianFeatures, Model, LinearClassifier, GCNClassifier, CLLoss, MotifLoss, CL_MotifLoss
 from utils import cal_accuracy, cal_F1
 from data_factory import load_data
 from sklearn.cluster import KMeans
@@ -40,6 +39,9 @@ class Exp:
         motif = motif.to(device)
         features = features.to(device)
         labels = labels.to(device)
+        self.masks = masks
+        self.n_classes = n_classes
+        self.labels = labels
         self.edge_index = edge_index
         self.motif = motif
         self.features = features
@@ -52,7 +54,8 @@ class Exp:
         for exp_iter in range(self.configs.exp_iters):
             logger.info(f"\ntrain iters {exp_iter}")
             Riemann_embeds_getter = RiemannianFeatures(features.shape[0], self.configs.dimensions, self.configs.d_free,
-                                                       self.configs.init_curvature, self.configs.num_factors).to(device)
+                                                       self.configs.init_curvature, self.configs.num_factors,
+                                                       learnable=self.configs.learnable).to(device)
             model = Model(backbone=self.configs.backbone, n_layers=self.configs.n_layers, in_features=in_features,
                           embed_features=self.configs.embed_features, hidden_features=self.configs.hidden_features,
                           n_heads=self.configs.n_heads, d_free=self.configs.d_free, drop_edge=self.configs.drop_edge, drop_node=self.configs.drop_edge,
@@ -60,23 +63,22 @@ class Exp:
                           ).to(device)
 
             optimizer = torch.optim.Adam(model.parameters(), lr=self.configs.lr, weight_decay=self.configs.w_decay)
-            r_optim = RiemannianAdam(Riemann_embeds_getter.parameters(), lr=self.configs.lr, weight_decay=self.configs.w_decay,
-                                     stabilize=100)
+            r_optim = RiemannianAdam(Riemann_embeds_getter.parameters(), lr=self.configs.lr_Riemann, weight_decay=self.configs.w_decay, stabilize=100)
 
-            criterion_cl = CLLoss(t=self.configs.temperature)
-            criterion_motif = MotifLoss(d_embeds=self.configs.d_embeds)
+            criterion_cl = CLLoss(t=self.configs.temperature).to(device)
+            criterion_motif = MotifLoss(d_embeds=self.configs.d_embeds).to(device)
+            criterion = CL_MotifLoss(criterion_cl, criterion_motif).to(device)
 
 
             logger.info("--------------------------Training Start-------------------------")
-            self.pretrain(model, Riemann_embeds_getter, criterion_cl, self.configs.epochs, logger, r_optim, optimizer)
-            self.pretrain(model, Riemann_embeds_getter, criterion_motif, self.configs.epochs, logger, r_optim, optimizer)
+            # self.pretrain(model, Riemann_embeds_getter, criterion_cl, self.configs.epochs, logger, r_optim, optimizer)
+            # self.pretrain(model, Riemann_embeds_getter, criterion_motif, 100, logger, r_optim, optimizer)
+            self.pretrain(model, Riemann_embeds_getter, criterion, self.configs.epochs, logger, r_optim, optimizer)
 
             if self.configs.downstream_task == 'NC':
-                model.eval()
-                Riemann_embeds_getter.eval()
-                best_val, test_acc, test_weighted_f1, test_macro_f1 = self.train_cls(products.detach(), edge_index, labels, n_classes, masks)
+                best_val, test_acc, test_weighted_f1, test_macro_f1 = self.train_cls(model, Riemann_embeds_getter, r_optim, optimizer)
                 logger.info(
-                    f"Epoch {epoch}: val_accuracy={best_val.item() * 100: .2f}%, test_accuracy={test_acc.item() * 100: .2f}%")
+                    f"val_accuracy={best_val.item() * 100: .2f}%, test_accuracy={test_acc.item() * 100: .2f}%")
                 logger.info(
                     f"\t\t weighted_f1={test_weighted_f1 * 100: .2f}%, macro_f1={test_macro_f1 * 100: .2f}%")
                 vals.append(best_val.item())
@@ -101,12 +103,12 @@ class Exp:
         weighted_f1, macro_f1 = cal_F1(out[mask].detach().cpu(), labels[mask].detach().cpu())
         return loss, acc, weighted_f1, macro_f1
 
-    def train_cls(self, features, edge_index, labels, n_classes, masks):
+    def train_cls(self, model, Riemann_embeds_getter, r_optim, optimizer):
         """masks = (train, val, test)"""
         device = self.device
         # model_cls = LinearClassifier(2*self.configs.embed_features, n_classes, drop=self.configs.drop_cls).to(device)
-        model_cls = GCNClassifier(2*self.configs.embed_features, n_classes, drop=self.configs.drop_cls).to(device)
-        optimizer = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
+        model_cls = GCNClassifier(2*self.configs.embed_features, self.n_classes, drop=self.configs.drop_cls).to(device)
+        optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
 
         best_acc = 0.
         early_stop_count = 0
@@ -114,15 +116,23 @@ class Exp:
 
         for epoch in range(1, self.configs.epochs_cls + 1):
             model_cls.train()
-            loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, edge_index, masks[0], features, labels)
+            model.train()
+            Riemann_embeds_getter.train()
+            embeds, x = model(self.features, self.edge_index, Riemann_embeds_getter)
+            features = torch.concat([x, torch.concat(embeds, dim=-1)], dim=-1)
+            loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[0], features, self.labels)
+            optimizer_cls.zero_grad()
+            r_optim.zero_grad()
             optimizer.zero_grad()
             loss.backward()
+            optimizer_cls.step()
+            r_optim.step()
             optimizer.step()
             print(f"Epoch {epoch}: train_loss={loss.item()}, train_accuracy={acc}")
 
             if epoch % self.configs.eval_freq == 0:
                 model_cls.eval()
-                val_loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, edge_index, masks[1], features, labels)
+                val_loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[1], features, self.labels)
                 print(f"Epoch {epoch}: val_loss={val_loss.item()}, val_accuracy={acc}")
                 if acc > best_acc:
                     early_stop_count = 0
@@ -133,5 +143,5 @@ class Exp:
                 if early_stop_count >= self.configs.patience_cls:
                     break
         best_model.eval()
-        test_loss, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(model_cls, edge_index, masks[2], features, labels)
+        test_loss, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[2], features, self.labels)
         return best_acc, test_acc, test_weighted_f1, test_macro_f1

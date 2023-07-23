@@ -12,8 +12,11 @@ from torch_geometric.utils import negative_sampling
 from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
 
+EPS = 1e-5
+
+
 class RiemannianFeatures(nn.Module):
-    def __init__(self, num_nodes, dimensions, d_free, init_curvature, num_factors):
+    def __init__(self, num_nodes, dimensions, d_free, init_curvature, num_factors, learnable=True):
         super(RiemannianFeatures, self).__init__()
         self.manifolds = nn.ModuleList()
         self.features = nn.ParameterList()
@@ -23,15 +26,16 @@ class RiemannianFeatures(nn.Module):
             else:
                 d = dimensions
             k = init_curvature * np.random.randn()
-            manifold = StereographicExact(k=k, learnable=True)
+            manifold = StereographicExact(k=k, learnable=learnable)
             features = ManifoldParameter(ManifoldTensor(torch.empty(num_nodes, d), manifold=manifold))
             if k != 0:
                 self.init_weights(features)
             self.manifolds.append(manifold)
             self.features.append(features)
         manifold = StereographicExact(k=0, learnable=False)
+        features = ManifoldParameter(ManifoldTensor(torch.randn(num_nodes, d_free), manifold=manifold))
         self.manifolds.append(manifold)
-        self.features.append(ManifoldParameter(ManifoldTensor(torch.randn(num_nodes, d_free), manifold=manifold)))
+        self.features.append(features)
 
     @staticmethod
     def init_weights(w, scale=1e-4):
@@ -54,9 +58,6 @@ class RiemannianFeatures(nn.Module):
                 products.append(features / features.data.norm(p=2, dim=-1, keepdim=True))
         products.append(self.features[-1])
         return products
-
-
-EPS = 1e-5
 
 
 class Model(nn.Module):
@@ -106,7 +107,10 @@ class Model(nn.Module):
                 div = torch.sum((x[:, None] - w[None]) ** 2, dim=-1)
                 distance = torch.log((1 + k * torch.sum(x * x, -1, keepdim=True)) / (div + EPS) + EPS)
             n = x.shape[-1]
-            z = torch.exp((n - 1) * distance / 2) * torch.cos(distance + b)
+            if k == 0:
+                z = torch.cos(distance + b)
+            else:
+                z = torch.exp((n - 1) * distance / 2) * torch.cos(distance + b)
             out.append(z)
         return out
 
@@ -160,6 +164,18 @@ class MotifLoss(nn.Module):
         f_v = features[v]
         f_w = features[w]
         return torch.concat([f_u, f_v, f_w], -1)
+
+
+class CL_MotifLoss(nn.Module):
+    def __init__(self, cl_loss, motif_loss):
+        super(CL_MotifLoss, self).__init__()
+        self.cl_loss = cl_loss
+        self.motif_loss = motif_loss
+    
+    def forward(self, products, x, motifs):
+        loss1 = self.cl_loss(products, x, motifs)
+        loss2 = self.motif_loss(products, x, motifs)
+        return loss1 + loss2
 
 
 class LinearClassifier(nn.Module):
