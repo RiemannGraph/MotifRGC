@@ -9,6 +9,7 @@ from geoopt import ManifoldTensor
 from geoopt import ManifoldParameter
 from backbone import GCN, GAT, GraphSAGE
 from torch_geometric.utils import negative_sampling
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
 
 class RiemannianFeatures(nn.Module):
@@ -50,7 +51,7 @@ class RiemannianFeatures(nn.Module):
             if manifold.k != 0:
                 products.append(self.normalize(features, manifold))
             else:
-                products.append(features)
+                products.append(features / features.data.norm(p=2, dim=-1, keepdim=True))
         products.append(self.features[-1])
         return products
 
@@ -60,7 +61,7 @@ EPS = 1e-5
 
 class Model(nn.Module):
     def __init__(self, backbone, n_layers, in_features, hidden_features, embed_features, n_heads, drop_edge, drop_node,
-                 num_factors, dimensions, d_free, d_embeds, temperature, device=torch.device('cuda')):
+                 num_factors, dimensions, d_free, d_embeds, device=torch.device('cuda')):
         super(Model, self).__init__()
         assert (num_factors + 1) * d_embeds == embed_features, "Embed dimensions do not match"
         if backbone == 'gcn':
@@ -72,7 +73,6 @@ class Model(nn.Module):
         else:
             raise NotImplementedError
 
-        self.temperature = temperature
         self.Ws = []
         self.bias = []
         for i in range(num_factors + 1):
@@ -87,19 +87,11 @@ class Model(nn.Module):
             self.Ws.append(w)
             self.bias.append(2 * torch.pi * torch.rand(d_embeds).to(device))
 
-        self.motif_cls = nn.Sequential(
-            nn.Linear(3 * d_embeds, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x, edge_index, motif, rm_features: RiemannianFeatures):
+    def forward(self, x, edge_index, rm_features: RiemannianFeatures):
         products = rm_features()
         x = self.encoder(x, edge_index)
         laplacian = self.random_mapping(rm_features.manifolds, products)
-        loss = self.cal_cl_loss(x, torch.concat(laplacian, -1)) + self.cal_motif_loss(laplacian, motif)
-        return torch.concat(laplacian, -1), loss
+        return laplacian, x
 
     def random_mapping(self, manifolds, products):
         out = []
@@ -118,11 +110,18 @@ class Model(nn.Module):
             out.append(z)
         return out
 
-    def cal_cl_loss(self, x1, x2):
+
+class CLLoss(nn.Module):
+    def __init__(self, t):
+        super(CLLoss, self).__init__()
+        self.t = t
+
+    def forward(self, x1, x2, motif):
+        x1 = torch.concat(x1, dim=-1)
         norm1 = x1.norm(dim=-1)
         norm2 = x2.norm(dim=-1)
         sim_matrix = torch.einsum('ik,jk->ij', x1, x2) / (torch.einsum('i,j->ij', norm1, norm2) + EPS)
-        sim_matrix = torch.exp(sim_matrix / self.temperature)
+        sim_matrix = torch.exp(sim_matrix / self.t)
         pos_sim = sim_matrix.diag()
         loss_1 = pos_sim / (sim_matrix.sum(dim=-2) - pos_sim)
         loss_2 = pos_sim / (sim_matrix.sum(dim=-1) - pos_sim)
@@ -132,14 +131,26 @@ class Model(nn.Module):
         loss = (loss_1 + loss_2) / 2.
         return loss
 
-    def cal_motif_loss(self, products, motifs):
+
+class MotifLoss(nn.Module):
+    def __init__(self, d_embeds):
+        super(MotifLoss, self).__init__()
+        self.motif_cls = nn.Sequential(
+            nn.Linear(3 * d_embeds, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, products, x, motifs):
         neg_motifs = negative_sampling(motifs[:-1], num_nodes=products[0].shape[0])
         neg_motifs = torch.concat([neg_motifs, motifs[-1:]], dim=0)
         loss = 0
         for product in products:
             pos = self.motif_cls(self.nodes_from_motif(product, motifs))
             neg = self.motif_cls(self.nodes_from_motif(product, neg_motifs))
-            loss = loss + F.binary_cross_entropy(pos, torch.ones_like(pos)) + F.binary_cross_entropy(neg, torch.zeros_like(neg))
+            loss = loss + F.binary_cross_entropy(pos, torch.ones_like(pos)) + \
+                   F.binary_cross_entropy(neg, torch.zeros_like(neg))
         return loss
 
     @staticmethod
@@ -152,12 +163,23 @@ class Model(nn.Module):
 
 
 class LinearClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, drop=0.1):
         super(LinearClassifier, self).__init__()
         self.fc = nn.Linear(in_channels, out_channels)
+        self.dropout = nn.Dropout(drop)
 
-    def forward(self, x):
-        return self.fc(x)
+    def forward(self, x, edge_index):
+        return self.fc(self.dropout(x))
+
+
+class GCNClassifier(nn.Module):
+    def __init__(self, in_channels, out_channels, drop=0.1):
+        super(GCNClassifier, self).__init__()
+        self.fc = GCNConv(in_channels, out_channels)
+        self.dropout = nn.Dropout(drop)
+
+    def forward(self, x, edge_index):
+        return self.fc(self.dropout(x), edge_index)
 
 
 class FermiDiracDecoder(nn.Module):
