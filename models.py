@@ -8,7 +8,6 @@ from geoopt.manifolds import Euclidean
 from geoopt import ManifoldTensor
 from geoopt import ManifoldParameter
 from backbone import GCN, GAT, GraphSAGE
-from torch_geometric.utils import negative_sampling
 from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
 
@@ -46,23 +45,22 @@ class RiemannianFeatures(nn.Module):
     @staticmethod
     def normalize(x, manifold):
         x_norm = x.norm(p=2, dim=-1, keepdim=True)
-        x = x / x_norm * 0.9 * torch.rand(1).to(x.device) * manifold.radius
+        if manifold.k != 0:
+            x = x / x_norm * 0.9 * torch.rand(1).to(x.device) * manifold.radius
+        else:
+            x = x / x_norm
         return x
 
     def forward(self):
         products = []
-        for manifold, features in zip(self.manifolds[:-1], self.features[:-1]):
-            if manifold.k != 0:
-                products.append(self.normalize(features, manifold))
-            else:
-                products.append(features / features.data.norm(p=2, dim=-1, keepdim=True))
-        products.append(self.features[-1])
+        for manifold, features in zip(self.manifolds, self.features):
+            products.append(self.normalize(features, manifold))
         return products
 
 
 class Model(nn.Module):
     def __init__(self, backbone, n_layers, in_features, hidden_features, embed_features, n_heads, drop_edge, drop_node,
-                 num_factors, dimensions, d_free, d_embeds, device=torch.device('cuda')):
+                 num_factors, dimensions, d_free, d_embeds, temperature, device=torch.device('cuda')):
         super(Model, self).__init__()
         assert (num_factors + 1) * d_embeds == embed_features, "Embed dimensions do not match"
         if backbone == 'gcn':
@@ -74,6 +72,7 @@ class Model(nn.Module):
         else:
             raise NotImplementedError
 
+        self.temperature = temperature
         self.Ws = []
         self.bias = []
         for i in range(num_factors + 1):
@@ -88,11 +87,20 @@ class Model(nn.Module):
             self.Ws.append(w)
             self.bias.append(2 * torch.pi * torch.rand(d_embeds).to(device))
 
-    def forward(self, x, edge_index, rm_features: RiemannianFeatures):
+        self.motif_cls = nn.Sequential(
+            nn.Linear(3 * d_embeds, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+        self.norm = nn.LayerNorm(2 * embed_features)
+
+    def forward(self, x, edge_index, motif, neg_motif, rm_features: RiemannianFeatures):
         products = rm_features()
         x = self.encoder(x, edge_index)
         laplacian = self.random_mapping(rm_features.manifolds, products)
-        return laplacian, x
+        embeds = torch.concat(laplacian, -1)
+        loss = self.cal_cl_loss(x, embeds) + self.cal_motif_loss(laplacian, motif, neg_motif)
+        return self.norm(torch.concat([x, embeds], -1)), loss
 
     def random_mapping(self, manifolds, products):
         out = []
@@ -107,12 +115,40 @@ class Model(nn.Module):
                 div = torch.sum((x[:, None] - w[None]) ** 2, dim=-1)
                 distance = torch.log((1 + k * torch.sum(x * x, -1, keepdim=True)) / (div + EPS) + EPS)
             n = x.shape[-1]
-            if k == 0:
-                z = torch.cos(distance + b)
-            else:
-                z = torch.exp((n - 1) * distance / 2) * torch.cos(distance + b)
+            z = torch.exp((n - 1) * distance / 2) * torch.cos(distance + b)
             out.append(z)
         return out
+
+    def cal_cl_loss(self, x1, x2):
+        norm1 = x1.norm(dim=-1)
+        norm2 = x2.norm(dim=-1)
+        sim_matrix = torch.einsum('ik,jk->ij', x1, x2) / (torch.einsum('i,j->ij', norm1, norm2) + EPS)
+        sim_matrix = torch.exp(sim_matrix / self.temperature)
+        pos_sim = sim_matrix.diag()
+        loss_1 = pos_sim / (sim_matrix.sum(dim=-2) - pos_sim)
+        loss_2 = pos_sim / (sim_matrix.sum(dim=-1) - pos_sim)
+
+        loss_1 = -torch.log(loss_1).mean()
+        loss_2 = -torch.log(loss_2).mean()
+        loss = (loss_1 + loss_2) / 2.
+        return loss
+
+    def cal_motif_loss(self, products, motifs, neg_motifs):
+        loss = 0
+        for product in products:
+            pos = self.motif_cls(self.nodes_from_motif(product, motifs))
+            neg = self.motif_cls(self.nodes_from_motif(product, neg_motifs))
+            loss = loss + F.binary_cross_entropy_with_logits(pos, torch.ones_like(pos).to(motifs.device)) + \
+                   F.binary_cross_entropy_with_logits(neg, torch.zeros_like(neg).to(motifs.device))
+        return loss / len(products)
+
+    @staticmethod
+    def nodes_from_motif(features, motifs):
+        u, v, w = motifs[0], motifs[1], motifs[2]
+        f_u = features[u]
+        f_v = features[v]
+        f_w = features[w]
+        return torch.concat([f_u, f_v, f_w], -1)
 
 
 class CLLoss(nn.Module):
@@ -121,7 +157,7 @@ class CLLoss(nn.Module):
         self.t = t
 
     def forward(self, x1, x2, motif):
-        x1 = torch.concat(x1, dim=-1)
+        x2 = torch.concat(x2, dim=-1)
         norm1 = x1.norm(dim=-1)
         norm2 = x2.norm(dim=-1)
         sim_matrix = torch.einsum('ik,jk->ij', x1, x2) / (torch.einsum('i,j->ij', norm1, norm2) + EPS)
@@ -142,20 +178,17 @@ class MotifLoss(nn.Module):
         self.motif_cls = nn.Sequential(
             nn.Linear(3 * d_embeds, 64),
             nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
+            nn.Linear(64, 1)
         )
 
-    def forward(self, products, x, motifs):
-        neg_motifs = negative_sampling(motifs[:-1], num_nodes=products[0].shape[0])
-        neg_motifs = torch.concat([neg_motifs, motifs[-1:]], dim=0)
+    def forward(self, x, products, motifs, neg_motifs):
         loss = 0
         for product in products:
             pos = self.motif_cls(self.nodes_from_motif(product, motifs))
             neg = self.motif_cls(self.nodes_from_motif(product, neg_motifs))
-            loss = loss + F.binary_cross_entropy(pos, torch.ones_like(pos)) + \
-                   F.binary_cross_entropy(neg, torch.zeros_like(neg))
-        return loss
+            loss = loss + F.binary_cross_entropy_with_logits(pos, torch.ones_like(pos)) + \
+                   F.binary_cross_entropy_with_logits(neg, torch.zeros_like(neg))
+        return loss / len(products)
 
     @staticmethod
     def nodes_from_motif(features, motifs):
@@ -167,14 +200,14 @@ class MotifLoss(nn.Module):
 
 
 class CL_MotifLoss(nn.Module):
-    def __init__(self, cl_loss, motif_loss):
+    def __init__(self, t, d_embeds):
         super(CL_MotifLoss, self).__init__()
-        self.cl_loss = cl_loss
-        self.motif_loss = motif_loss
+        self.cl_loss = CLLoss(t)
+        self.motif_loss = MotifLoss(d_embeds)
     
-    def forward(self, products, x, motifs):
-        loss1 = self.cl_loss(products, x, motifs)
-        loss2 = self.motif_loss(products, x, motifs)
+    def forward(self, x, products, motifs):
+        loss1 = self.cl_loss(x, products, motifs)
+        loss2 = self.motif_loss(x, products, motifs)
         return loss1 + loss2
 
 
@@ -207,18 +240,3 @@ class FermiDiracDecoder(nn.Module):
     def forward(self, dist):
         probs = 1. / (torch.exp((dist - self.r) / self.t) + 1.0)
         return probs
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

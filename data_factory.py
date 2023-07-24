@@ -3,6 +3,7 @@ import networkx as nx
 import numpy as np
 from torch_geometric.datasets import Planetoid, WikipediaNetwork, Actor
 from torch_geometric.utils import to_networkx
+from torch_geometric.utils import negative_sampling
 from ogb.nodeproppred import PygNodePropPredDataset
 from sklearn.datasets import load_wine, load_breast_cancer, load_digits, fetch_20newsgroups
 from sklearn.feature_extraction.text import CountVectorizer
@@ -45,14 +46,28 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
         raise NotImplementedError
 
     print(dataset.data)
-    G = to_networkx(dataset.data)
+    mask = (train_mask, val_mask, test_mask)
     features = dataset.data.x
     num_features = dataset.num_features
     labels = dataset.data.y
     edge_index = dataset.data.edge_index.long()
+    neg_edges = negative_sampling(edge_index)
     motif = get_motif(edge_index)
+    neg_motif = negative_sampling(motif[:-1])
+    neg_motif = torch.concat([neg_motif, motif[-1:]], dim=0)
     num_classes = dataset.num_classes
-    return features, num_features, labels, edge_index, motif, (train_mask, val_mask, test_mask), num_classes
+    
+    return features, num_features, labels, edge_index, neg_edges, motif, neg_motif, mask, num_classes
+
+
+def mask_edges(edge_index, neg_edges, val_prop, test_prop):
+    n = len(edge_index[0])
+    n_val = int(val_prop * n)
+    n_test = int(test_prop * n)
+    edge_val, edge_test, edge_train = edge_index[:, :n_val], edge_index[:, n_val:n_val + n_test], edge_index[:, n_val + n_test:]
+    val_edges_neg, test_edges_neg = neg_edges[:, :n_val], neg_edges[:, n_val:n_test + n_val]
+    train_edges_neg = torch.concat([neg_edges, val_edges_neg, test_edges_neg], dim=-1)
+    return (edge_train, edge_val, edge_test), (train_edges_neg, val_edges_neg, test_edges_neg)
 
 
 def get_motif(edge_index: torch.Tensor):
