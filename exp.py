@@ -78,6 +78,7 @@ class Exp:
                 self.pretrain(model, Riemann_embeds_getter, self.configs.epochs, logger, r_optim, optimizer)
 
             if self.configs.downstream_task == 'NC':
+                _, _, _ = self.train_lp(model, Riemann_embeds_getter, r_optim, optimizer, logger)
                 best_val, test_acc, test_weighted_f1, test_macro_f1 = self.train_cls(model, Riemann_embeds_getter, r_optim, optimizer, logger)
                 logger.info(
                     f"val_accuracy={best_val.item() * 100: .2f}%, test_accuracy={test_acc.item() * 100: .2f}%")

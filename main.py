@@ -15,7 +15,7 @@ np.random.seed(seed)
 parser = argparse.ArgumentParser(description='')
 
 # Experiment settings
-parser.add_argument('--downstream_task', type=str, default='LP',
+parser.add_argument('--downstream_task', type=str, default='NC',
                     choices=['NC', 'LP'])
 parser.add_argument('--dataset', type=str, default='Cora',
                     choices=['Cora', 'Citeseer', 'Pubmed', 'chameleon', 'squirrel'])
@@ -37,7 +37,7 @@ parser.add_argument('--learnable', type=bool, default=True)
 
 # Contrastive Learning Module
 parser.add_argument('--backbone', type=str, default='gcn', choices=['gcn', 'gat', 'sage'])
-parser.add_argument('--epochs', type=int, default=1)
+parser.add_argument('--epochs', type=int, default=200)
 parser.add_argument('--hidden_features', type=int, default=64)
 parser.add_argument('--embed_features', type=int, default=32, help='dimensions of graph embedding')
 parser.add_argument('--n_layers', type=int, default=2)
