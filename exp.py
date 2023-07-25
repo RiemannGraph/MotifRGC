@@ -42,6 +42,7 @@ class Exp:
         features = features.to(device)
         labels = labels.to(device)
         self.masks = masks
+        self.in_features = in_features
         self.n_classes = n_classes
         self.labels = labels
         self.edge_index = edge_index
@@ -115,7 +116,7 @@ class Exp:
         """masks = (train, val, test)"""
         device = self.device
         # model_cls = LinearClassifier(2*self.configs.embed_features, n_classes, drop=self.configs.drop_cls).to(device)
-        model_cls = GCNClassifier(2*self.configs.embed_features, self.n_classes, drop=self.configs.drop_cls).to(device)
+        model_cls = GCNClassifier((self.configs.num_factors+1)*self.configs.embed_features, self.n_classes, drop=self.configs.drop_cls).to(device)
         optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
 
         best_acc = 0.
@@ -151,8 +152,8 @@ class Exp:
         return best_acc, test_acc, test_weighted_f1, test_macro_f1
     
     def cal_lp_loss(self, embeddings, decoder, pos_edges, neg_edges):
-        pos_scores = decoder(torch.sum((embeddings[pos_edges[0]] - embeddings[pos_edges[1]])**2, -1).sqrt())
-        neg_scores = decoder(torch.sum((embeddings[neg_edges[0]] - embeddings[neg_edges[1]])**2, -1).sqrt())
+        pos_scores = decoder(torch.sum((embeddings[pos_edges[0]] - embeddings[pos_edges[1]])**2, -1))
+        neg_scores = decoder(torch.sum((embeddings[neg_edges[0]] - embeddings[neg_edges[1]])**2, -1))
         loss = F.binary_cross_entropy(pos_scores.clip(0.01, 0.99), torch.ones_like(pos_scores)) + \
                 F.binary_cross_entropy(neg_scores.clip(0.01, 0.99), torch.zeros_like(neg_scores))
         label = [1] * pos_scores.shape[0] + [0] * neg_scores.shape[0]
@@ -166,6 +167,7 @@ class Exp:
         pos_edges, neg_edges = mask_edges(self.edge_index, self.neg_edge, val_prop, test_prop)
         decoder = FermiDiracDecoder(self.configs.r, self.configs.t).to(self.device)
         best_ap = 0
+        early_stop_count = 0
         for g in r_optim.param_groups:
             g['lr'] = self.configs.lr_lp
         for epoch in range(1, self.configs.epochs_lp + 1):

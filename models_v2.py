@@ -10,7 +10,6 @@ from geoopt import ManifoldParameter
 from backbone import GCN, GAT, GraphSAGE
 from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
-
 EPS = 1e-5
 
 
@@ -180,5 +179,6 @@ class FermiDiracDecoder(nn.Module):
         self.t = t
 
     def forward(self, dist):
+        # probs = 1. / (torch.exp((dist - self.r) / self.t) + 1.0)
         probs = torch.sigmoid((self.r - dist) / self.t)
         return probs
