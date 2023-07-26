@@ -35,4 +35,4 @@ python3 main.py \
 --epochs_lp  300 \
 --patience_lp  10
 # --learnable true  \   # If curvature is not learnable
-# --pre_training \  #If don't pre-training 
+# --pre_training \  #If don't pre-training

@@ -17,8 +17,8 @@ parser = argparse.ArgumentParser(description='')
 # Experiment settings
 parser.add_argument('--downstream_task', type=str, default='NC',
                     choices=['NC', 'LP'])
-parser.add_argument('--dataset', type=str, default='Cora',
-                    choices=['Cora', 'Citeseer', 'Pubmed', 'chameleon', 'squirrel'])
+parser.add_argument('--dataset', type=str, default='airport',
+                    choices=['Cora', 'Citeseer', 'Pubmed', 'chameleon', 'squirrel', 'airport'])
 parser.add_argument('--root_path', type=str, default='./datasets')
 parser.add_argument('--eval_freq', type=int, default=50)
 parser.add_argument('--exp_iters', type=int, default=5)

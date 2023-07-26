@@ -1,6 +1,10 @@
+import random
+
 import torch
 import networkx as nx
 import numpy as np
+import torch_geometric.data
+from torch_geometric.data import InMemoryDataset
 from torch_geometric.datasets import Planetoid, WikipediaNetwork, Actor
 from torch_geometric.utils import to_networkx
 from torch_geometric.utils import negative_sampling
@@ -10,6 +14,9 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.preprocessing import scale
 from sklearn.model_selection import train_test_split
+import scipy.sparse as sp
+import pickle as pkl
+import os
 
 
 def get_mask(idx, length):
@@ -42,6 +49,9 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
         idx_test = np.arange(num_nodes - 1000, num_nodes)
         label_len = dataset.data.y.shape[0]
         train_mask, val_mask, test_mask = get_mask(idx_train, label_len), get_mask(idx_val, label_len), get_mask(idx_test, label_len)
+    elif data_name == "airport":
+        dataset = Airport(root)
+        train_mask, val_mask, test_mask = dataset.data.mask
     else:
         raise NotImplementedError
 
@@ -85,5 +95,80 @@ def get_motif(edge_index: torch.Tensor):
     index = torch.tensor(index).t()
     return index
 
+
+def bin_feat(feat, bins):
+    digitized = np.digitize(feat, bins)
+    return digitized - digitized.min()
+
+
+def augment(adj, features, normalize_feats=True):
+    deg = np.squeeze(np.sum(adj, axis=0).astype(int))
+    deg[deg > 5] = 5
+    deg_onehot = torch.tensor(np.eye(6)[deg], dtype=torch.float).squeeze()
+    const_f = torch.ones(features.shape[0], 1)
+    features = torch.cat((features, deg_onehot, const_f), dim=1)
+    return features
+
+
+def split_data(labels, val_prop, test_prop, seed):
+    np.random.seed(seed)
+    nb_nodes = labels.shape[0]
+    all_idx = np.arange(nb_nodes)
+    pos_idx = labels.nonzero()[0]
+    neg_idx = (1. - labels).nonzero()[0]
+    np.random.shuffle(pos_idx)
+    np.random.shuffle(neg_idx)
+    pos_idx = pos_idx.tolist()
+    neg_idx = neg_idx.tolist()
+    nb_pos_neg = min(len(pos_idx), len(neg_idx))
+    nb_val = round(val_prop * nb_pos_neg)
+    nb_test = round(test_prop * nb_pos_neg)
+    idx_val_pos, idx_test_pos, idx_train_pos = pos_idx[:nb_val], pos_idx[nb_val:nb_val + nb_test], pos_idx[
+                                                                                                   nb_val + nb_test:]
+    idx_val_neg, idx_test_neg, idx_train_neg = neg_idx[:nb_val], neg_idx[nb_val:nb_val + nb_test], neg_idx[
+                                                                                                   nb_val + nb_test:]
+    return idx_val_pos + idx_val_neg, idx_test_pos + idx_test_neg, idx_train_pos + idx_train_neg
+
+
+class Airport(InMemoryDataset):
+    def __init__(self, root):
+        super(Airport, self).__init__()
+        val_prop, test_prop = 0.15, 0.15
+        graph = pkl.load(open(f"{root}/airport/airport.p", 'rb'))
+        adj = nx.adjacency_matrix(graph).toarray()
+        row, col = np.nonzero(adj)
+        edge_index = np.concatenate([row[None], col[None]], axis=0)
+        features = np.array([graph._node[u]['feat'] for u in graph.nodes()])
+        features = augment(adj, torch.tensor(features).float())
+        label_idx = 4
+        labels = features[:, label_idx]
+        features = features[:, :label_idx]
+        labels = bin_feat(labels, bins=[7.0 / 7, 8.0 / 7, 9.0 / 7])
+
+        idx_val, idx_test, idx_train = split_data(labels, val_prop, test_prop, random.seed(3047))
+        mask = (idx_train, idx_val, idx_test)
+
+        self.data = torch_geometric.data.Data(x=features,
+                                              edge_index=torch.tensor(edge_index),
+                                              y=torch.tensor(labels),
+                                              mask=mask)
+
+        @property
+        def num_features(self) -> int:
+            return self.data.x.shape[-1]
+
+        @property
+        def raw_file_names(self):
+            pass
+
+        @property
+        def processed_file_names(self):
+            pass
+
+        def download(self):
+            pass
+
+        def process(self):
+            pass
 
 
