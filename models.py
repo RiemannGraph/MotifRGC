@@ -56,7 +56,7 @@ class RiemannianFeatures(nn.Module):
 
 class Model(nn.Module):
     def __init__(self, backbone, n_layers, in_features, hidden_features, embed_features, n_heads, drop_edge, drop_node,
-                 num_factors, dimensions, d_free, d_embeds, temperature, device=torch.device('cuda')):
+                 num_factors, dimensions, d_embeds, temperature, device=torch.device('cuda')):
         super(Model, self).__init__()
         if backbone == 'gcn':
             self.encoder = GCN(n_layers, in_features, hidden_features, embed_features, drop_edge, drop_node)

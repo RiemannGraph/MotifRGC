@@ -31,7 +31,7 @@ parser.add_argument('--pre_training', type=bool, default=True)
 parser.add_argument('--num_factors', type=int, default=3, help='number of product factors')
 parser.add_argument('--dimensions', type=int, default=8, help='dimension of Riemannian embedding')
 parser.add_argument('--d_embeds', type=int, default=8, help='dimension of laplacian features')
-parser.add_argument('--d_free', type=int, default=2, help='dimension of rotational factor')
+# parser.add_argument('--d_free', type=int, default=2, help='dimension of rotational factor')
 parser.add_argument('--init_curvature', type=int, default=-1.0, help='initial curvature')
 parser.add_argument('--learnable', type=bool, default=True)
 
@@ -49,7 +49,7 @@ parser.add_argument('--w_decay', type=float, default=0.)
 parser.add_argument('--n_heads', type=int, default=8, help='number of attention heads')
 parser.add_argument('--t', type=float, default=1., help='for Fermi-Dirac decoder')
 parser.add_argument('--r', type=float, default=2., help='Fermi-Dirac decoder')
-parser.add_argument('--gamma', type=float, default=5., help='coefficient for structural loss')
+# parser.add_argument('--gamma', type=float, default=5., help='coefficient for structural loss')
 parser.add_argument('--temperature', type=float, default=0.2, help='temperature of contrastive loss')
 
 # Node Classification

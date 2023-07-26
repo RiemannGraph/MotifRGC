@@ -66,7 +66,7 @@ class Exp:
                                                        learnable=self.configs.learnable).to(device)
             model = Model(backbone=self.configs.backbone, n_layers=self.configs.n_layers, in_features=in_features,
                           embed_features=self.configs.embed_features, hidden_features=self.configs.hidden_features,
-                          n_heads=self.configs.n_heads, d_free=self.configs.d_free, drop_edge=self.configs.drop_edge, drop_node=self.configs.drop_edge,
+                          n_heads=self.configs.n_heads, drop_edge=self.configs.drop_edge, drop_node=self.configs.drop_edge,
                           num_factors=self.configs.num_factors, dimensions=self.configs.dimensions, d_embeds=self.configs.d_embeds,
                           temperature=self.configs.temperature, device=device).to(device)
 
