@@ -25,15 +25,15 @@ parser.add_argument('--exp_iters', type=int, default=5)
 parser.add_argument('--version', type=str, default="run")
 parser.add_argument('--save_embeds', type=str, default="./results/embeds.npy")
 parser.add_argument('--log_path', type=str, default="./results/cls_Cora.log")
-parser.add_argument('--pre_training', type=bool, default=True)
+parser.add_argument('--pre_training', action='store_false')
 
 # Riemannian Embeds
 parser.add_argument('--num_factors', type=int, default=3, help='number of product factors')
 parser.add_argument('--dimensions', type=int, default=8, help='dimension of Riemannian embedding')
 parser.add_argument('--d_embeds', type=int, default=8, help='dimension of laplacian features')
 # parser.add_argument('--d_free', type=int, default=2, help='dimension of rotational factor')
-parser.add_argument('--init_curvature', type=int, default=-1.0, help='initial curvature')
-parser.add_argument('--learnable', type=bool, default=True)
+parser.add_argument('--init_curvature', type=float, default=-1.0, help='initial curvature')
+parser.add_argument('--learnable', action='store_false')
 
 # Contrastive Learning Module
 parser.add_argument('--backbone', type=str, default='gcn', choices=['gcn', 'gat', 'sage'])
@@ -74,13 +74,15 @@ parser.add_argument('--gpu', type=int, default=0, help='gpu')
 parser.add_argument('--devices', type=str, default='0,1', help='device ids of multile gpus')
 
 configs = parser.parse_args()
-log_path = f"./results/{configs.version}/{configs.downstream_task}_{configs.backbone}_{configs.dataset}.log"
+results_dir = f"./results/{configs.version}"
+log_path = f"{results_dir}/{configs.downstream_task}_{configs.backbone}_{configs.dataset}.log"
 configs.log_path = log_path
 if not os.path.exists(f"./results"):
     os.mkdir("./results")
-if not os.path.exists(f"./results/{configs.version}"):
-    os.mkdir(f"./results/{configs.version}")
-print(f"Log path: {configs.log_path}")
+if not os.path.exists(results_dir):
+    os.mkdir(results_dir)
+configs.save_embeds = f"{results_dir}/embeds.npy"
+print(f"Log path: {configs.log_path}; embeds path: {configs.save_embeds}")
 logger = create_logger(configs.log_path)
 logger.info(configs)
 

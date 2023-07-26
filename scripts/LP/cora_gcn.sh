@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 python3 main.py \
 --downstream_task LP  \
@@ -6,13 +6,10 @@ python3 main.py \
 --root_path ./datasets  \
 --eval_freq 50  \
 --exp_iters 5 \
---save_embeds ./results/embeds.npy  \
-----pre_training  True  \
 --num_factors 3 \
 --dimensions 8  \
 --d_embeds  8 \
 --init_curvature  -1.0  \
---learnable True  \
 --backbone  gcn \
 --epochs  200 \
 --hidden_features 64  \
@@ -37,3 +34,5 @@ python3 main.py \
 --w_decay_lp 0.0 \
 --epochs_lp  300 \
 --patience_lp  10
+# --learnable true  \   # If curvature is not learnable
+# --pre_training \  #If don't pre-training 

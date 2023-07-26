@@ -15,7 +15,7 @@ EPS = 1e-5
 
 
 class RiemannianFeatures(nn.Module):
-    def __init__(self, num_nodes, dimensions, d_free, init_curvature, num_factors, learnable=True):
+    def __init__(self, num_nodes, dimensions, init_curvature, num_factors, learnable=True):
         super(RiemannianFeatures, self).__init__()
         self.manifolds = nn.ModuleList()
         self.features = nn.ParameterList()

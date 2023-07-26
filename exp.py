@@ -61,7 +61,7 @@ class Exp:
             aps = []
         for exp_iter in range(self.configs.exp_iters):
             logger.info(f"\ntrain iters {exp_iter}")
-            Riemann_embeds_getter = RiemannianFeatures(features.shape[0], self.configs.dimensions, self.configs.d_free,
+            Riemann_embeds_getter = RiemannianFeatures(features.shape[0], self.configs.dimensions,
                                                        self.configs.init_curvature, self.configs.num_factors,
                                                        learnable=self.configs.learnable).to(device)
             model = Model(backbone=self.configs.backbone, n_layers=self.configs.n_layers, in_features=in_features,
