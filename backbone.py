@@ -60,3 +60,29 @@ class GraphSAGE(nn.Module):
         x = self.layers[-1](x, edge_index)
         return x
 
+
+class LinearClassifier(nn.Module):
+    def __init__(self, in_channels, out_channels, drop=0.1):
+        super(LinearClassifier, self).__init__()
+        self.fc = nn.Linear(in_channels, out_channels)
+        self.dropout = nn.Dropout(drop)
+
+    def forward(self, x, edge_index):
+        return self.fc(self.dropout(x))
+
+
+class GNNClassifier(nn.Module):
+    def __init__(self, in_channels, out_channels, drop=0.1, backbone='gcn'):
+        super(GNNClassifier, self).__init__()
+        if backbone == 'gcn':
+            self.fc = GCNConv(in_channels, out_channels)
+        elif backbone == 'gat':
+            self.fc = GATConv(in_channels, out_channels)
+        elif backbone == 'sage':
+            self.fc = SAGEConv(in_channels, out_channels)
+        else:
+            raise NotImplementedError
+        self.dropout = nn.Dropout(drop)
+
+    def forward(self, x, edge_index):
+        return self.fc(self.dropout(x), edge_index)

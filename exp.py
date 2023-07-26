@@ -2,7 +2,8 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
-from models import RiemannianFeatures, Model, LinearClassifier, GCNClassifier, FermiDiracDecoder
+from models import RiemannianFeatures, Model, FermiDiracDecoder
+from backbone import LinearClassifier, GNNClassifier
 from utils import cal_accuracy, cal_F1, cal_AUC_AP
 from data_factory import load_data, mask_edges
 from sklearn.cluster import KMeans
@@ -116,8 +117,8 @@ class Exp:
     def train_cls(self, model, Riemann_embeds_getter, r_optim, optimizer, logger):
         """masks = (train, val, test)"""
         device = self.device
-        # model_cls = LinearClassifier(2*self.configs.embed_features, n_classes, drop=self.configs.drop_cls).to(device)
-        model_cls = GCNClassifier((self.configs.num_factors+1)*self.configs.embed_features, self.n_classes, drop=self.configs.drop_cls).to(device)
+        model_cls = GNNClassifier((self.configs.num_factors+1)*self.configs.embed_features, self.n_classes,
+                                  drop=self.configs.drop_cls, backbone=self.configs.backbone).to(device)
         optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
 
         best_acc = 0.

@@ -153,26 +153,6 @@ class Model(nn.Module):
         return torch.concat([f_u, f_v, f_w], -1)
 
 
-class LinearClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels, drop=0.1):
-        super(LinearClassifier, self).__init__()
-        self.fc = nn.Linear(in_channels, out_channels)
-        self.dropout = nn.Dropout(drop)
-
-    def forward(self, x, edge_index):
-        return self.fc(self.dropout(x))
-
-
-class GCNClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels, drop=0.1):
-        super(GCNClassifier, self).__init__()
-        self.fc = GCNConv(in_channels, out_channels)
-        self.dropout = nn.Dropout(drop)
-
-    def forward(self, x, edge_index):
-        return self.fc(self.dropout(x), edge_index)
-
-
 class FermiDiracDecoder(nn.Module):
     def __init__(self, r, t):
         super(FermiDiracDecoder, self).__init__()
