@@ -5,6 +5,7 @@ import random
 import argparse
 from exp import Exp
 from logger import create_logger
+from typing import Union
 
 
 seed = 3047
@@ -29,7 +30,7 @@ parser.add_argument('--pre_training', action='store_false')
 
 # Riemannian Embeds
 parser.add_argument('--num_factors', type=int, default=3, help='number of product factors')
-parser.add_argument('--dimensions', type=int, default=8, help='dimension of Riemannian embedding')
+parser.add_argument('--dimensions', type=Union[int, list], default=8, help='dimension of Riemannian embedding')
 parser.add_argument('--d_embeds', type=int, default=8, help='dimension of laplacian features')
 # parser.add_argument('--d_free', type=int, default=2, help='dimension of rotational factor')
 parser.add_argument('--init_curvature', type=float, default=-1.0, help='initial curvature')
