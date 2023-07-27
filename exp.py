@@ -118,7 +118,7 @@ class Exp:
         """masks = (train, val, test)"""
         device = self.device
         model_cls = GNNClassifier((self.configs.num_factors+1)*self.configs.embed_features, self.n_classes,
-                                  drop=self.configs.drop_cls, backbone=self.configs.backbone).to(device)
+                                  drop=self.configs.drop_cls, drop_edge=self.configs.drop_edge_cls, backbone=self.configs.backbone).to(device)
         optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
 
         best_acc = 0.

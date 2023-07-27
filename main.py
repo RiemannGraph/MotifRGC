@@ -30,7 +30,7 @@ parser.add_argument('--pre_training', action='store_false')
 
 # Riemannian Embeds
 parser.add_argument('--num_factors', type=int, default=3, help='number of product factors')
-parser.add_argument('--dimensions', type=Union[int, list], default=8, help='dimension of Riemannian embedding')
+parser.add_argument('--dimensions', type=int, nargs='+', default=8, help='dimension of Riemannian embedding')
 parser.add_argument('--d_embeds', type=int, default=8, help='dimension of laplacian features')
 # parser.add_argument('--d_free', type=int, default=2, help='dimension of rotational factor')
 parser.add_argument('--init_curvature', type=float, default=-1.0, help='initial curvature')
@@ -54,8 +54,8 @@ parser.add_argument('--r', type=float, default=2., help='Fermi-Dirac decoder')
 parser.add_argument('--temperature', type=float, default=0.2, help='temperature of contrastive loss')
 
 # Node Classification
-parser.add_argument('--n_layers_cls', type=int, default=2)
 parser.add_argument('--drop_cls', type=float, default=0.1)
+parser.add_argument('--drop_edge_cls', type=float, default=0.1)
 parser.add_argument('--lr_cls', type=float, default=0.01)
 parser.add_argument('--w_decay_cls', type=float, default=0)
 parser.add_argument('--epochs_cls', type=int, default=200)
@@ -75,6 +75,8 @@ parser.add_argument('--gpu', type=int, default=0, help='gpu')
 parser.add_argument('--devices', type=str, default='0,1', help='device ids of multile gpus')
 
 configs = parser.parse_args()
+if len(configs.dimensions) == 1:
+    configs.dimensions = configs.dimensions[0]
 results_dir = f"./results/{configs.version}"
 log_path = f"{results_dir}/{configs.downstream_task}_{configs.backbone}_{configs.dataset}.log"
 configs.log_path = log_path

@@ -28,10 +28,10 @@ class GAT(nn.Module):
     def __init__(self, n_layers, in_features, hidden_features, out_features, heads, drop_edge=0.5, drop_feats=0.5):
         super(GAT, self).__init__()
         self.layers = nn.ModuleList()
-        self.layers.append(GATConv(in_features, hidden_features, heads, dropout=drop_feats))
+        self.layers.append(GATConv(in_features, hidden_features//heads, heads, dropout=drop_feats))
         for _ in range(n_layers - 2):
-            self.layers.append(GATConv(hidden_features, hidden_features, heads, dropout=drop_feats))
-        self.layers.append(GATConv(hidden_features, out_features, heads, dropout=drop_feats))
+            self.layers.append(GATConv(hidden_features, hidden_features//heads, heads, dropout=drop_feats))
+        self.layers.append(GATConv(hidden_features, out_features//heads, heads, dropout=drop_feats))
         self.drop_edge = drop_edge
         self.drop = nn.Dropout(drop_feats)
 
@@ -72,7 +72,7 @@ class LinearClassifier(nn.Module):
 
 
 class GNNClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels, drop=0.1, backbone='gcn'):
+    def __init__(self, in_channels, out_channels, drop=0.1, drop_edge=0.0, backbone='gcn'):
         super(GNNClassifier, self).__init__()
         if backbone == 'gcn':
             self.fc = GCNConv(in_channels, out_channels)
@@ -83,6 +83,8 @@ class GNNClassifier(nn.Module):
         else:
             raise NotImplementedError
         self.dropout = nn.Dropout(drop)
+        self.drop_edge = drop_edge
 
     def forward(self, x, edge_index):
+        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
         return self.fc(self.dropout(x), edge_index)
