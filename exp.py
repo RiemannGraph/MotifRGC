@@ -3,13 +3,11 @@ import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 from models import RiemannianFeatures, Model, FermiDiracDecoder
-from backbone import LinearClassifier, GNNClassifier
+from backbone import GNNClassifier
 from utils import cal_accuracy, cal_F1, cal_AUC_AP
 from data_factory import load_data, mask_edges
-from sklearn.cluster import KMeans
 from logger import create_logger
 from geoopt.optim import RiemannianAdam
-from geoopt.manifolds.stereographic.math import dist
 
 
 class Exp:
@@ -35,7 +33,8 @@ class Exp:
     def train(self):
         logger = create_logger(self.configs.log_path)
         device = self.device
-        features, in_features, labels, edge_index, neg_edge, motif, neg_motif, masks, n_classes = load_data(self.configs.root_path, self.configs.dataset)
+        features, in_features, labels, edge_index, neg_edge, motif, neg_motif, masks, n_classes = load_data(
+            self.configs.root_path, self.configs.dataset)
         edge_index = edge_index.to(device)
         neg_edge = neg_edge.to(device)
         motif = motif.to(device)
@@ -67,12 +66,15 @@ class Exp:
                                                        learnable=self.configs.learnable).to(device)
             model = Model(backbone=self.configs.backbone, n_layers=self.configs.n_layers, in_features=in_features,
                           embed_features=self.configs.embed_features, hidden_features=self.configs.hidden_features,
-                          n_heads=self.configs.n_heads, drop_edge=self.configs.drop_edge, drop_node=self.configs.drop_edge,
-                          num_factors=self.configs.num_factors, dimensions=self.configs.dimensions, d_embeds=self.configs.d_embeds,
+                          n_heads=self.configs.n_heads, drop_edge=self.configs.drop_edge,
+                          drop_node=self.configs.drop_edge,
+                          num_factors=self.configs.num_factors, dimensions=self.configs.dimensions,
+                          d_embeds=self.configs.d_embeds,
                           temperature=self.configs.temperature, device=device).to(device)
 
             optimizer = torch.optim.Adam(model.parameters(), lr=self.configs.lr, weight_decay=self.configs.w_decay)
-            r_optim = RiemannianAdam(Riemann_embeds_getter.parameters(), lr=self.configs.lr_Riemann, weight_decay=self.configs.w_decay, stabilize=100)
+            r_optim = RiemannianAdam(Riemann_embeds_getter.parameters(), lr=self.configs.lr_Riemann,
+                                     weight_decay=self.configs.w_decay, stabilize=100)
 
             logger.info("--------------------------Training Start-------------------------")
             if self.configs.pre_training:
@@ -80,7 +82,8 @@ class Exp:
 
             if self.configs.downstream_task == 'NC':
                 _, _, _ = self.train_lp(model, Riemann_embeds_getter, r_optim, optimizer, logger)
-                best_val, test_acc, test_weighted_f1, test_macro_f1 = self.train_cls(model, Riemann_embeds_getter, r_optim, optimizer, logger)
+                best_val, test_acc, test_weighted_f1, test_macro_f1 = self.train_cls(model, Riemann_embeds_getter,
+                                                                                     r_optim, optimizer, logger)
                 logger.info(
                     f"val_accuracy={best_val.item() * 100: .2f}%, test_accuracy={test_acc.item() * 100: .2f}%")
                 logger.info(
@@ -100,6 +103,7 @@ class Exp:
 
         if self.configs.downstream_task == "NC":
             logger.info(f"valid results: {np.mean(vals)}~{np.std(vals)}")
+            logger.info(f"best test ACC: {np.max(accs)}")
             logger.info(f"test results: {np.mean(accs)}~{np.std(accs)}")
             logger.info(f"test weighted-f1: {np.mean(wf1s)}~{np.std(wf1s)}")
             logger.info(f"test macro-f1: {np.mean(mf1s)}~{np.std(mf1s)}")
@@ -117,10 +121,16 @@ class Exp:
     def train_cls(self, model, Riemann_embeds_getter, r_optim, optimizer, logger):
         """masks = (train, val, test)"""
         device = self.device
-        model_cls = GNNClassifier((self.configs.num_factors+1)*self.configs.embed_features, self.n_classes,
-                                  drop=self.configs.drop_cls, drop_edge=self.configs.drop_edge_cls, backbone=self.configs.backbone).to(device)
-        optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
-
+        d = (self.configs.num_factors + 1) * self.configs.embed_features
+        model_cls = GNNClassifier(backbone=self.configs.backbone, n_layers=2, in_features=self.in_features + d,
+                                  hidden_features=self.configs.hidden_features_cls, out_features=self.n_classes,
+                                  n_heads=self.configs.n_heads, drop_edge=self.configs.drop_edge_cls,
+                                  drop_node=self.configs.drop_cls).to(device)
+        optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls,
+                                         weight_decay=self.configs.w_decay_cls)
+        optimizer = torch.optim.Adam(model.parameters(), lr=self.configs.lr, weight_decay=self.configs.w_decay)
+        r_optim = RiemannianAdam(Riemann_embeds_getter.parameters(), lr=self.configs.lr_Riemann,
+                                 weight_decay=self.configs.w_decay, stabilize=100)
         best_acc = 0.
         early_stop_count = 0
 
@@ -129,19 +139,22 @@ class Exp:
             model.train()
             Riemann_embeds_getter.train()
             features, _ = model(self.features, self.edge_index, self.motif, self.neg_motif, Riemann_embeds_getter)
-            loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[0], features, self.labels)
+            features = torch.concat([self.features, features.detach()], -1)
+            loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[0], features,
+                                                                 self.labels)
             optimizer_cls.zero_grad()
-            r_optim.zero_grad()
             optimizer.zero_grad()
+            r_optim.zero_grad()
             loss.backward()
             optimizer_cls.step()
-            r_optim.step()
             optimizer.step()
+            r_optim.step()
             logger.info(f"Epoch {epoch}: train_loss={loss.item()}, train_accuracy={acc}")
 
             if epoch % self.configs.eval_freq == 0:
                 model_cls.eval()
-                val_loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[1], features, self.labels)
+                val_loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[1],
+                                                                         features, self.labels)
                 logger.info(f"Epoch {epoch}: val_loss={val_loss.item()}, val_accuracy={acc}")
                 if acc > best_acc:
                     early_stop_count = 0
@@ -150,19 +163,20 @@ class Exp:
                     early_stop_count += 1
                 if early_stop_count >= self.configs.patience_cls:
                     break
-        test_loss, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[2], features, self.labels)
+        test_loss, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(model_cls, self.edge_index,
+                                                                                 self.masks[2], features, self.labels)
         return best_acc, test_acc, test_weighted_f1, test_macro_f1
-    
+
     def cal_lp_loss(self, embeddings, decoder, pos_edges, neg_edges):
-        pos_scores = decoder(torch.sum((embeddings[pos_edges[0]] - embeddings[pos_edges[1]])**2, -1))
-        neg_scores = decoder(torch.sum((embeddings[neg_edges[0]] - embeddings[neg_edges[1]])**2, -1))
+        pos_scores = decoder(torch.sum((embeddings[pos_edges[0]] - embeddings[pos_edges[1]]) ** 2, -1))
+        neg_scores = decoder(torch.sum((embeddings[neg_edges[0]] - embeddings[neg_edges[1]]) ** 2, -1))
         loss = F.binary_cross_entropy(pos_scores.clip(0.01, 0.99), torch.ones_like(pos_scores)) + \
-                F.binary_cross_entropy(neg_scores.clip(0.01, 0.99), torch.zeros_like(neg_scores))
+               F.binary_cross_entropy(neg_scores.clip(0.01, 0.99), torch.zeros_like(neg_scores))
         label = [1] * pos_scores.shape[0] + [0] * neg_scores.shape[0]
         preds = list(pos_scores.detach().cpu().numpy()) + list(neg_scores.detach().cpu().numpy())
         auc, ap = cal_AUC_AP(preds, label)
         return loss, auc, ap
-    
+
     def train_lp(self, model, Riemann_embeds_getter, r_optim, optimizer, logger):
         val_prop = 0.05
         test_prop = 0.1
@@ -198,5 +212,4 @@ class Exp:
                     break
         test_loss, test_auc, test_ap = self.cal_lp_loss(embeddings, decoder, pos_edges[2], neg_edges[2])
         return test_loss, test_auc, test_ap
-            
-            
+

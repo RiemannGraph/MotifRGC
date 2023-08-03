@@ -17,10 +17,10 @@ class GCN(nn.Module):
         self.drop = nn.Dropout(drop_feats)
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
+        edge = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
         for layer in self.layers[:-1]:
-            x = self.drop(F.relu(layer(x, edge_index)))
-        x = self.layers[-1](x, edge_index)
+            x = self.drop(F.relu(layer(x, edge)))
+        x = self.layers[-1](x, edge)
         return x
 
 
@@ -28,17 +28,17 @@ class GAT(nn.Module):
     def __init__(self, n_layers, in_features, hidden_features, out_features, heads, drop_edge=0.5, drop_feats=0.5):
         super(GAT, self).__init__()
         self.layers = nn.ModuleList()
-        self.layers.append(GATConv(in_features, hidden_features//heads, heads, dropout=drop_feats))
+        self.layers.append(GATConv(in_features, hidden_features, heads, dropout=drop_feats, concat=False))
         for _ in range(n_layers - 2):
-            self.layers.append(GATConv(hidden_features, hidden_features//heads, heads, dropout=drop_feats))
-        self.layers.append(GATConv(hidden_features, out_features//heads, heads, dropout=drop_feats))
+            self.layers.append(GATConv(hidden_features, hidden_features, heads, dropout=drop_feats, concat=False))
+        self.layers.append(GATConv(hidden_features, out_features, heads, dropout=drop_feats, concat=False))
         self.drop_edge = drop_edge
         self.drop = nn.Dropout(drop_feats)
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
+        edge = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
         for layer in self.layers:
-            x = layer(x, edge_index)
+            x = layer(x, edge)
         return x
 
 
@@ -54,37 +54,24 @@ class GraphSAGE(nn.Module):
         self.dropout_edge = drop_edge
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.dropout_edge, training=self.training)[0]
+        edge = dropout_edge(edge_index, self.dropout_edge, training=self.training)[0]
         for layer in self.layers[: -1]:
-            x = self.drop(F.relu(layer(x, edge_index)))
-        x = self.layers[-1](x, edge_index)
+            x = self.drop(F.relu(layer(x, edge)))
+        x = self.layers[-1](x, edge)
         return x
 
 
-class LinearClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels, drop=0.1):
-        super(LinearClassifier, self).__init__()
-        self.fc = nn.Linear(in_channels, out_channels)
-        self.dropout = nn.Dropout(drop)
-
-    def forward(self, x, edge_index):
-        return self.fc(self.dropout(x))
-
-
 class GNNClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels, drop=0.1, drop_edge=0.0, backbone='gcn'):
+    def __init__(self, backbone, n_layers, in_features, hidden_features, out_features, n_heads, drop_edge, drop_node):
         super(GNNClassifier, self).__init__()
         if backbone == 'gcn':
-            self.fc = GCNConv(in_channels, out_channels)
+            self.encoder = GCN(n_layers, in_features, hidden_features, out_features, drop_edge, drop_node)
         elif backbone == 'gat':
-            self.fc = GATConv(in_channels, out_channels)
+            self.encoder = GAT(n_layers, in_features, hidden_features, out_features, n_heads, drop_edge, drop_node)
         elif backbone == 'sage':
-            self.fc = SAGEConv(in_channels, out_channels)
+            self.encoder = GraphSAGE(n_layers, in_features, hidden_features, out_features, drop_edge, drop_node)
         else:
             raise NotImplementedError
-        self.dropout = nn.Dropout(drop)
-        self.drop_edge = drop_edge
 
     def forward(self, x, edge_index):
-        edge_index = dropout_edge(edge_index, self.drop_edge, training=self.training)[0]
-        return self.fc(self.dropout(x), edge_index)
+        return self.encoder(x, edge_index)

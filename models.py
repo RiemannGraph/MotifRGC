@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from geoopt.manifolds.stereographic.math import artan_k
+from geoopt.manifolds.stereographic.math import artan_k, logmap0, project
 from geoopt.manifolds.stereographic import StereographicExact
 from geoopt.manifolds import Euclidean
 from geoopt import ManifoldTensor
@@ -50,7 +50,8 @@ class RiemannianFeatures(nn.Module):
     def forward(self):
         products = []
         for manifold, features in zip(self.manifolds, self.features):
-            products.append(self.normalize(features, manifold))
+            # products.append(self.normalize(features, manifold))
+            products.append(project(features, k=manifold.k))
         return products
 
 
@@ -58,6 +59,7 @@ class Model(nn.Module):
     def __init__(self, backbone, n_layers, in_features, hidden_features, embed_features, n_heads, drop_edge, drop_node,
                  num_factors, dimensions, d_embeds, temperature, device=torch.device('cuda')):
         super(Model, self).__init__()
+        d_embeds = dimensions
         if backbone == 'gcn':
             self.encoder = GCN(n_layers, in_features, hidden_features, embed_features, drop_edge, drop_node)
             self.encoder2 = GCN(n_layers, d_embeds, hidden_features, embed_features, drop_edge, drop_node)

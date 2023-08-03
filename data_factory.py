@@ -17,6 +17,9 @@ from sklearn.model_selection import train_test_split
 import scipy.sparse as sp
 import pickle as pkl
 import os
+import warnings
+
+warnings.filterwarnings('ignore')
 
 
 def get_mask(idx, length):
@@ -48,9 +51,13 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
         idx_val = np.arange(num_nodes - 1500, num_nodes - 1000)
         idx_test = np.arange(num_nodes - 1000, num_nodes)
         label_len = dataset.data.y.shape[0]
-        train_mask, val_mask, test_mask = get_mask(idx_train, label_len), get_mask(idx_val, label_len), get_mask(idx_test, label_len)
+        train_mask, val_mask, test_mask = get_mask(idx_train, label_len), get_mask(idx_val, label_len), get_mask(
+            idx_test, label_len)
     elif data_name == "airport":
         dataset = Airport(root)
+        train_mask, val_mask, test_mask = dataset.data.mask
+    elif data_name == "amazon":
+        dataset = Amazon(root)
         train_mask, val_mask, test_mask = dataset.data.mask
     else:
         raise NotImplementedError
@@ -66,7 +73,7 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
     neg_motif = negative_sampling(motif[:-1])
     neg_motif = torch.concat([neg_motif, motif[-1:]], dim=0)
     num_classes = dataset.num_classes
-    
+
     return features, num_features, labels, edge_index, neg_edges, motif, neg_motif, mask, num_classes
 
 
@@ -74,7 +81,8 @@ def mask_edges(edge_index, neg_edges, val_prop, test_prop):
     n = len(edge_index[0])
     n_val = int(val_prop * n)
     n_test = int(test_prop * n)
-    edge_val, edge_test, edge_train = edge_index[:, :n_val], edge_index[:, n_val:n_val + n_test], edge_index[:, n_val + n_test:]
+    edge_val, edge_test, edge_train = edge_index[:, :n_val], edge_index[:, n_val:n_val + n_test], edge_index[:,
+                                                                                                  n_val + n_test:]
     val_edges_neg, test_edges_neg = neg_edges[:, :n_val], neg_edges[:, n_val:n_test + n_val]
     train_edges_neg = torch.concat([neg_edges, val_edges_neg, test_edges_neg], dim=-1)
     return (edge_train, edge_val, edge_test), (train_edges_neg, val_edges_neg, test_edges_neg)
@@ -172,3 +180,48 @@ class Airport(InMemoryDataset):
             pass
 
 
+class Amazon(InMemoryDataset):
+    def __init__(self, root):
+        super(Amazon, self).__init__()
+        names1 = ['adj_matrix.npz', 'attr_matrix.npz']
+        names2 = ['label_matrix.npy', 'train_mask.npy', 'val_mask.npy', 'test_mask.npy']
+        objects = []
+        for tmp_name in names1:
+            tmp_path = f"{root}/amazon/amazon.{tmp_name}"
+            objects.append(sp.load_npz(tmp_path))
+        for tmp_name in names2:
+            tmp_path = f"{root}/amazon/amazon.{tmp_name}"
+            objects.append(np.load(tmp_path))
+        adj, features, label_matrix, train_mask, val_mask, test_mask = tuple(objects)
+        row, col = np.nonzero(adj)
+        edge_index = np.concatenate([row[None], col[None]], axis=0)
+        features = torch.tensor(features.toarray()).float()
+        labels = np.argmax(label_matrix, 1)
+        arr = np.arange(len(train_mask))
+        idx_train = torch.tensor(arr[train_mask]).long()
+        idx_val = torch.tensor(arr[val_mask]).long()
+        idx_test = torch.tensor(arr[test_mask]).long()
+        mask = (idx_train, idx_val, idx_test)
+
+        self.data = torch_geometric.data.Data(x=features,
+                                              edge_index=torch.tensor(edge_index),
+                                              y=torch.tensor(labels),
+                                              mask=mask)
+
+        @property
+        def num_features(self) -> int:
+            return self.data.x.shape[-1]
+
+        @property
+        def raw_file_names(self):
+            pass
+
+        @property
+        def processed_file_names(self):
+            pass
+
+        def download(self):
+            pass
+
+        def process(self):
+            pass
