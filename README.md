@@ -1,1 +1,1 @@
-# HoRGNN
+# MotifRGC
