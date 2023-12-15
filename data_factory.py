@@ -5,10 +5,10 @@ import networkx as nx
 import numpy as np
 import torch_geometric.data
 from torch_geometric.data import InMemoryDataset
-from torch_geometric.datasets import Planetoid, WikipediaNetwork, Actor
+from torch_geometric.datasets import Planetoid, WikipediaNetwork, Actor, GemsecDeezer, WikiCS, FacebookPagePage
 from torch_geometric.utils import to_networkx
 from torch_geometric.utils import negative_sampling
-from ogb.nodeproppred import PygNodePropPredDataset
+# from ogb.nodeproppred import PygNodePropPredDataset
 from sklearn.datasets import load_wine, load_breast_cancer, load_digits, fetch_20newsgroups
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
@@ -18,7 +18,6 @@ import scipy.sparse as sp
 import pickle as pkl
 import os
 import warnings
-
 warnings.filterwarnings('ignore')
 
 
@@ -35,7 +34,7 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
         dataset = Planetoid(root=root, name=data_name, split=split)
         train_mask, val_mask, test_mask = dataset.data.train_mask, dataset.data.val_mask, dataset.data.test_mask
     elif data_name == 'ogbn-arxiv':
-        dataset = PygNodePropPredDataset(root=root, name=data_name)
+        dataset = PygNodePropPredDataset(name=data_name)
         mask = dataset.get_idx_split()
         train_mask, val_mask, test_mask = mask.values()
     elif data_name in ['actor', 'chameleon', 'squirrel']:
@@ -51,14 +50,31 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
         idx_val = np.arange(num_nodes - 1500, num_nodes - 1000)
         idx_test = np.arange(num_nodes - 1000, num_nodes)
         label_len = dataset.data.y.shape[0]
-        train_mask, val_mask, test_mask = get_mask(idx_train, label_len), get_mask(idx_val, label_len), get_mask(
-            idx_test, label_len)
+        train_mask, val_mask, test_mask = get_mask(idx_train, label_len), get_mask(idx_val, label_len), get_mask(idx_test, label_len)
     elif data_name == "airport":
         dataset = Airport(root)
         train_mask, val_mask, test_mask = dataset.data.mask
     elif data_name == "amazon":
         dataset = Amazon(root)
         train_mask, val_mask, test_mask = dataset.data.mask
+    elif data_name == "wikics":
+        dataset = WikiCS(root=f"{root}/wikics")
+        train_mask, val_mask, test_mask = dataset.data.train_mask, dataset.data.val_mask, dataset.data.test_mask
+    elif data_name == "facebook":
+        dataset = FacebookPagePage(root=f"{root}/facebook")
+        n = len(dataset.data.x)
+        index = torch.arange(n)
+        train_mask = index[: int(n*0.7)]
+        val_mask = index[int(n*0.7): int(n * 0.8)]
+        test_mask = index[int(n*0.8):]
+    # elif data_name in ["deezer_hu", "deezer_hr", "deezer_ro"]:
+    #     if data_name == "deezer_hu":
+    #         dataset = GemsecDeezer(root, "HU")
+    #     elif data_name == "deezer_hr":
+    #         dataset = GemsecDeezer(root, "HR")
+    #     elif data_name == "deezer_ro":
+    #         dataset = GemsecDeezer(root, "RO")
+    #     train_mask, val_mask, test_mask = dataset.data.mask
     else:
         raise NotImplementedError
 
@@ -70,10 +86,10 @@ def load_data(root: str, data_name: str, split='public', **kwargs):
     edge_index = dataset.data.edge_index.long()
     neg_edges = negative_sampling(edge_index)
     motif = get_motif(edge_index)
-    neg_motif = negative_sampling(motif[:-1])
-    neg_motif = torch.concat([neg_motif, motif[-1:]], dim=0)
+    neg_motif = negative_sampling(motif[:2])
+    neg_motif = torch.concat([neg_motif, motif[2:]], dim=0)
     num_classes = dataset.num_classes
-
+    
     return features, num_features, labels, edge_index, neg_edges, motif, neg_motif, mask, num_classes
 
 
@@ -81,8 +97,7 @@ def mask_edges(edge_index, neg_edges, val_prop, test_prop):
     n = len(edge_index[0])
     n_val = int(val_prop * n)
     n_test = int(test_prop * n)
-    edge_val, edge_test, edge_train = edge_index[:, :n_val], edge_index[:, n_val:n_val + n_test], edge_index[:,
-                                                                                                  n_val + n_test:]
+    edge_val, edge_test, edge_train = edge_index[:, :n_val], edge_index[:, n_val:n_val + n_test], edge_index[:, n_val + n_test:]
     val_edges_neg, test_edges_neg = neg_edges[:, :n_val], neg_edges[:, n_val:n_test + n_val]
     train_edges_neg = torch.concat([neg_edges, val_edges_neg, test_edges_neg], dim=-1)
     return (edge_train, edge_val, edge_test), (train_edges_neg, val_edges_neg, test_edges_neg)
@@ -99,7 +114,10 @@ def get_motif(edge_index: torch.Tensor):
         u, v = edge[0].item(), edge[1].item()
         for w in locate[v]:
             if w != u:
-                index.append([u, v, w])
+                if w in locate[u] or u in locate[w]:
+                    index.append([u, v, w, 1])
+                else:
+                    index.append([u, v, w, 0])
     index = torch.tensor(index).t()
     return index
 

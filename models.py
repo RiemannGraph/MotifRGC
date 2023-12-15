@@ -2,13 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from geoopt.manifolds.stereographic.math import artan_k, logmap0, project
+from geoopt.manifolds.stereographic.math import project
 from geoopt.manifolds.stereographic import StereographicExact
-from geoopt.manifolds import Euclidean
 from geoopt import ManifoldTensor
 from geoopt import ManifoldParameter
 from backbone import GCN, GAT, GraphSAGE
-from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
 
 EPS = 1e-5
@@ -50,7 +48,6 @@ class RiemannianFeatures(nn.Module):
     def forward(self):
         products = []
         for manifold, features in zip(self.manifolds, self.features):
-            # products.append(self.normalize(features, manifold))
             products.append(project(features, k=manifold.k))
         return products
 
@@ -85,11 +82,7 @@ class Model(nn.Module):
             self.Ws.append(w)
             self.bias.append(2 * torch.pi * torch.rand(d_embeds).to(device))
 
-        self.motif_cls = nn.Sequential(
-            nn.Linear(3 * d_embeds, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1)
-        )
+        self.decoder = FermiDiracDecoder(2, 1)
         self.norm = nn.LayerNorm((num_factors+1) * embed_features)
 
     def forward(self, x, edge_index, motif, neg_motif, rm_features: RiemannianFeatures):
@@ -136,23 +129,34 @@ class Model(nn.Module):
         loss_2 = -torch.log(loss_2).mean()
         loss = (loss_1 + loss_2) / 2.
         return loss
+    
+    def cal_motif_loss(self, products, pos_motifs, neg_motifs):
+        embeddings = torch.concat(products, dim=-1)
+        pos_scores1 = self.decoder(torch.sum((embeddings[pos_motifs[0]] - embeddings[pos_motifs[1]])**2, -1))
+        pos_scores2 = self.decoder(torch.sum((embeddings[pos_motifs[2]] - embeddings[pos_motifs[1]])**2, -1))
+        pos_scores3 = self.decoder(torch.sum((embeddings[pos_motifs[2]] - embeddings[pos_motifs[0]])**2, -1))
 
-    def cal_motif_loss(self, products, motifs, neg_motifs):
-        loss = 0
-        for product in products:
-            pos = self.motif_cls(self.nodes_from_motif(product, motifs))
-            neg = self.motif_cls(self.nodes_from_motif(product, neg_motifs))
-            loss = loss + F.binary_cross_entropy_with_logits(pos, torch.ones_like(pos).to(motifs.device)) + \
-                   F.binary_cross_entropy_with_logits(neg, torch.zeros_like(neg).to(motifs.device))
-        return loss / len(products)
-
-    @staticmethod
-    def nodes_from_motif(features, motifs):
-        u, v, w = motifs[0], motifs[1], motifs[2]
-        f_u = features[u]
-        f_v = features[v]
-        f_w = features[w]
-        return torch.concat([f_u, f_v, f_w], -1)
+        neg_scores1 = self.decoder(torch.sum((embeddings[neg_motifs[0]] - embeddings[neg_motifs[1]])**2, -1))
+        neg_scores2 = self.decoder(torch.sum((embeddings[neg_motifs[2]] - embeddings[neg_motifs[1]])**2, -1))
+        neg_scores3 = self.decoder(torch.sum((embeddings[neg_motifs[2]] - embeddings[neg_motifs[0]])**2, -1))
+        
+        pos1 = pos_scores1 * pos_scores2 * (1 - pos_scores3)
+        pos2 = pos_scores1 * pos_scores2 * pos_scores3
+        pos0 = 1 - pos1 - pos2
+        pos = torch.stack([pos0, pos1, pos2], dim=1)
+        p_y = pos_motifs[-1].detach() + 1
+        
+        neg1 = neg_scores1 * neg_scores2 * (1 - neg_scores3)
+        neg2 = neg_scores1 * neg_scores2 * neg_scores3
+        neg0 = 1 - neg1 - neg2
+        neg = torch.stack([neg0, neg1, neg2], dim=1)
+        n_y = torch.zeros_like(p_y)
+        
+        probs = torch.concat([pos, neg], dim=0)
+        label = torch.concat([p_y, n_y])
+        
+        loss = F.nll_loss(torch.log(probs + 1e-5), label)
+        return loss
 
 
 class FermiDiracDecoder(nn.Module):
